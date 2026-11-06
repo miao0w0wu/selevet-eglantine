@@ -466,6 +466,25 @@ if (WIN32 AND NOT YUZU_USE_BUNDLED_QT)
     if (WINDEPLOYQT_EXECUTABLE)
         set(YUZU_EXE_DIR "$<TARGET_FILE_DIR:yuzu>")
         add_custom_command(TARGET yuzu POST_BUILD COMMAND ${WINDEPLOYQT_EXECUTABLE} "$<TARGET_FILE:yuzu>" --dir "${YUZU_EXE_DIR}" --libdir "${YUZU_EXE_DIR}" --plugindir "${YUZU_EXE_DIR}/plugins" --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler --no-translations --verbose 0)
+        # Point Qt at the deployed plugin directory so the build is self-contained.
+        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/qt.conf" CONTENT "[Paths]\nPlugins = plugins\n")
+        add_custom_command(TARGET yuzu POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/qt.conf" "${YUZU_EXE_DIR}/qt.conf")
+        # windeployqt does not copy MinGW's own runtime. Without libstdc++-6/libgcc_s_seh-1/
+        # libwinpthread-1 next to the executable, qwindows.dll fails to load and Qt reports
+        # "no Qt platform plugin could be initialized". Copy every non-system dependency.
+        if (MINGW)
+            # Derive the toolchain prefix from the compiler itself; MINGW_PREFIX is only set when
+            # building from an MSYS2 shell, which is not guaranteed.
+            get_filename_component(YUZU_MINGW_PREFIX "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            get_filename_component(YUZU_MINGW_PREFIX "${YUZU_MINGW_PREFIX}" DIRECTORY)
+            add_custom_command(TARGET yuzu POST_BUILD
+                COMMAND ${CMAKE_COMMAND}
+                    "-DEXE=$<TARGET_FILE:yuzu>"
+                    "-DDEST=${YUZU_EXE_DIR}"
+                    "-DPREFIX=${YUZU_MINGW_PREFIX}"
+                    -P "${PROJECT_SOURCE_DIR}/CMakeModules/DeployMinGWRuntime.cmake"
+                VERBATIM)
+        endif()
     else()
         message(WARNING "windeployqt not found: copy the Qt DLLs next to the executable yourself")
     endif()
